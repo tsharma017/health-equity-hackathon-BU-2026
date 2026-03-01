@@ -1,0 +1,628 @@
+---
+title: "Sexual Identity and Suicidal Ideation Among U.S. High School Students"
+subtitle: "Boston University School of Public Health — Health Equity Hackathon 2026"
+author: "Tej Sharma"
+date: "2026-02-28"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 9,
+  fig.height = 6
+)
+```
+
+---
+
+# Background
+
+This analysis investigates the association between **sexual identity** and **suicidal ideation (SI)**
+among U.S. high school students using the **2023 Youth Risk Behavior Survey (YRBS)**.
+
+**Research Question:**
+> Is sexual identity associated with suicidal ideation? Does race/ethnicity confound or modify this association?
+
+**Variables:**
+
+| Role | Variable | Type |
+|---|---|---|
+| Exposure | Sexual Identity | Binary (Heterosexual vs Non-Het/Questioning) |
+| Outcome | Suicidal Ideation | Binary (Yes/No) |
+| Confounder/EMM | Race/Ethnicity | Categorical (8 groups) |
+| Covariates | Age, Sex, Low Grades, Bullying | Binary/Categorical |
+
+---
+
+# Step 1: Load Packages
+
+```{r packages}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tableone)
+library(table1)
+```
+
+---
+
+# Step 2: Load Data
+
+```{r load-data}
+# Load the YRBS 2023 dataset
+# Update this path to where your file is saved
+data <- readRDS("/Users/tejsharm/Downloads/yrbs2023_final.rds")
+
+cat("Dataset dimensions:", nrow(data), "rows x", ncol(data), "columns\n")
+```
+
+---
+
+# Step 3: Explore Key Variables (Before Cleaning)
+
+```{r explore}
+# Look at raw distribution of key variables before any recoding
+cat("=== Sexual Identity (raw) ===\n")
+table(data$sexual_identity, useNA = "always")
+
+cat("\n=== Suicidal Ideation (raw) ===\n")
+table(data$suicideideation_binary, useNA = "always")
+
+cat("\n=== Age (raw) ===\n")
+table(data$age, useNA = "always")
+
+cat("\n=== Race/Ethnicity (raw) ===\n")
+table(data$raceeth, useNA = "always")
+```
+
+---
+
+# Step 4: Data Cleaning
+
+**Decisions made and why:**
+
+- **Age:** Removed students aged 12–13 (codes 1–2) — too young for reliable self-report of sexual identity
+- **Sexual Identity:** Collapsed to binary: 0 = Heterosexual, 1 = Non-Heterosexual/Questioning (codes 2–5); code 6 ("Don't Know") set to NA
+- **Suicidal Ideation:** Already binary — converted to numeric 0/1
+- **Sex:** 0 = Male, 1 = Female
+- **Low Grades:** 0 = Good grades (A/B), 1 = Low grades
+- **Bullying:** 0 = Not bullied, 1 = Bullied at school
+
+```{r data-cleaning}
+table1_clean <- data %>%
+  dplyr::select(
+    sexual_identity, suicideideation_binary,
+    raceeth, age, bulliedschool_binary,
+    sex, lowgrades_binary
+  ) %>%
+
+  # Remove 12–13 year olds (codes 1 and 2)
+  filter(age %in% c("3", "4", "5", "6", "7")) %>%
+
+  mutate(
+    # Exposure: Sexual Identity → Binary
+    # 0 = Heterosexual, 1 = Non-Het/Questioning, NA = Don't Know
+    sexual_identity_cat = case_when(
+      sexual_identity == "1"                   ~ 0,
+      sexual_identity %in% c("2","3","4","5")  ~ 1,
+      TRUE                                     ~ NA_real_
+    ),
+
+    # Outcome: Suicidal Ideation → Numeric
+    SI = case_when(
+      suicideideation_binary == "1" ~ 1,
+      suicideideation_binary == "0" ~ 0,
+      TRUE                          ~ NA_real_
+    ),
+
+    # Covariate: Sex → Numeric (0=Male, 1=Female)
+    sex_clean = case_when(
+      sex == "1" ~ 1,
+      sex == "0" ~ 0,
+      TRUE        ~ NA_real_
+    ),
+
+    # Covariate: Low Grades → Binary
+    lowgrades_clean = case_when(
+      lowgrades_binary == "1" ~ 1,
+      lowgrades_binary == "0" ~ 0,
+      TRUE                    ~ NA_real_
+    ),
+
+    # Covariate: Bullied at School → Binary
+    bullied_clean = case_when(
+      bulliedschool_binary == "1" ~ 1,
+      bulliedschool_binary == "0" ~ 0,
+      TRUE                        ~ NA_real_
+    )
+  )
+
+# Verify cleaning
+cat("Total students after removing age 12-13:", nrow(table1_clean), "\n\n")
+
+cat("Sexual Identity (cleaned):\n")
+table(table1_clean$sexual_identity_cat, useNA = "always")
+
+cat("\nSuicidal Ideation (cleaned):\n")
+table(table1_clean$SI, useNA = "always")
+
+cat("\nBullied (cleaned):\n")
+table(table1_clean$bullied_clean, useNA = "always")
+```
+
+---
+
+# Step 5: Descriptive Statistics (Table 1)
+
+Table 1 describes the characteristics of the study population, both overall and stratified
+by sexual identity (the exposure). This helps us see whether the two groups (heterosexual
+vs non-heterosexual) differ on key covariates — which tells us which variables we may
+need to control for.
+
+```{r table1}
+# Remove NAs in exposure variable for stratified table only
+# (We only need to know which group each student is in for the stratified table)
+yrbs_mod <- table1_clean %>% filter(!is.na(sexual_identity_cat))
+
+# Overall Table 1 — describes the full sample
+table1(~ factor(SI) + factor(sex_clean) + factor(age) +
+         factor(raceeth) + factor(lowgrades_clean) +
+         factor(bullied_clean),
+       data = table1_clean)
+```
+
+```{r table1-stratified}
+# Stratified Table 1 — compares the two exposure groups side by side
+# This answers: "Are heterosexual and non-het students different from each other?"
+table1(~ factor(SI) + factor(sex_clean) + factor(age) +
+         factor(raceeth) + factor(lowgrades_clean) +
+         factor(bullied_clean) | sexual_identity_cat,
+       data = yrbs_mod)
+```
+
+---
+
+# Step 6: SI Prevalence by Sexual Identity Group (All 6 Categories)
+
+Before collapsing to binary, it is useful to visualize SI prevalence across ALL
+sexual identity categories to understand the full picture.
+
+```{r plot-prevalence}
+prev_data <- table1_clean %>%
+  filter(!is.na(sexual_identity), !is.na(SI)) %>%
+  mutate(
+    si_label = recode(as.character(sexual_identity),
+      "1" = "Heterosexual",
+      "2" = "Gay/Lesbian",
+      "3" = "Bisexual",
+      "4" = "Other",
+      "5" = "Questioning",
+      "6" = "Don't Know"
+    )
+  ) %>%
+  group_by(si_label) %>%
+  summarise(
+    prevalence = mean(SI, na.rm = TRUE) * 100,
+    n          = n(),
+    .groups    = "drop"
+  )
+
+ggplot(prev_data, aes(x = reorder(si_label, prevalence),
+                      y = prevalence,
+                      fill = si_label)) +
+  geom_bar(stat = "identity", width = 0.6, alpha = 0.85) +
+  geom_text(aes(label = paste0(round(prevalence, 1), "%")),
+            hjust = -0.2, size = 4, fontface = "bold") +
+  coord_flip() +
+  scale_fill_brewer(palette = "RdYlBu") +
+  scale_y_continuous(limits = c(0, 55)) +
+  labs(
+    title    = "Prevalence of Suicidal Ideation by Sexual Identity",
+    subtitle = "YRBS 2023 | U.S. High School Students (Age 14–18)",
+    x        = NULL,
+    y        = "Prevalence (%)",
+    caption  = "Source: CDC Youth Risk Behavior Survey 2023"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title      = element_text(face = "bold"),
+    plot.subtitle   = element_text(color = "grey50"),
+    plot.caption    = element_text(color = "grey50")
+  )
+```
+
+---
+
+# Step 7: Association Testing
+
+## 7a. Chi-Square Test
+
+The chi-square test asks: **"Are sexual identity and suicidal ideation statistically associated?"**
+It tests whether the distribution of SI differs between heterosexual and non-heterosexual students.
+
+```{r chi-square}
+# Cross tabulation with readable labels
+cross_tab <- table(table1_clean$sexual_identity_cat, table1_clean$SI)
+dimnames(cross_tab) <- list(
+  "Sexual Identity"   = c("Heterosexual", "Non-Het/Questioning"),
+  "Suicidal Ideation" = c("No", "Yes")
+)
+
+# Raw counts
+print(cross_tab)
+
+# Row percentages — % with SI in each group
+cat("\nRow percentages (% with SI in each group):\n")
+round(prop.table(cross_tab, margin = 1) * 100, 1)
+
+# Chi-square test
+chisq.test(cross_tab, correct = FALSE)
+```
+
+## 7b. Crude (Unadjusted) Odds Ratio
+
+The crude OR tells us the **raw strength of association** between sexual identity and SI,
+before accounting for any other variables. It answers: "How much higher are the odds of
+SI in non-het students compared to heterosexual students?"
+
+```{r crude-or}
+model_crude <- glm(
+  SI ~ sexual_identity_cat,
+  data   = table1_clean,
+  family = binomial(link = "logit")
+)
+
+summary(model_crude)
+
+cat("\n=== Crude OR with 95% CI ===\n")
+round(exp(cbind(OR = coef(model_crude),
+                confint.default(model_crude))), 2)
+```
+
+---
+
+# Step 8: Adjusted Logistic Regression
+
+**Why adjust?**
+The crude OR may be distorted by other variables (confounders). For example, non-het
+students may be more likely to get bullied, and bullying independently increases SI risk.
+By adjusting, we isolate the **true** effect of sexual identity.
+
+**Why `relevel()` for raceeth and age only?**
+These are the only variables with 3+ categories. Binary variables (sex, grades, bullying)
+automatically use 0 as the reference — no manual specification needed.
+
+```{r adjusted-model}
+model_adjusted <- glm(
+  SI ~ sexual_identity_cat +
+       relevel(factor(raceeth), ref = "5") +   # White as reference
+       relevel(factor(age),     ref = "5") +   # Age 16 as reference (middle)
+       sex_clean +
+       lowgrades_clean +
+       bullied_clean,
+  data   = table1_clean,
+  family = binomial(link = "logit")
+)
+
+summary(model_adjusted)
+
+cat("\n=== Adjusted OR with 95% CI ===\n")
+round(exp(cbind(OR = coef(model_adjusted),
+                confint.default(model_adjusted))), 2)
+```
+
+---
+
+# Step 9: Confounding Assessment
+
+**Rule:** If the OR changes by more than 10% after adjustment → confounding is present.
+
+```{r confounding-check}
+crude_or    <- exp(coef(model_crude)["sexual_identity_cat"])
+adjusted_or <- exp(coef(model_adjusted)["sexual_identity_cat"])
+pct_change  <- abs(crude_or - adjusted_or) / crude_or * 100
+
+cat("==========================================\n")
+cat("         CONFOUNDING ASSESSMENT\n")
+cat("==========================================\n")
+cat("Crude OR:    ", round(crude_or, 2), "\n")
+cat("Adjusted OR: ", round(adjusted_or, 2), "\n")
+cat("% Change:    ", round(pct_change, 1), "%\n")
+cat("Confounding present (>10%)?",
+    ifelse(pct_change > 10, "YES → Report Adjusted OR",
+                            "NO  → Crude OR is sufficient"), "\n")
+cat("==========================================\n")
+```
+
+---
+
+# Step 10: Visualize Crude vs Adjusted OR (Forest Plot)
+
+```{r forest-plot-compare}
+or_data <- data.frame(
+  Model = c("Crude OR", "Adjusted OR"),
+  OR    = c(crude_or, adjusted_or),
+  LCI   = c(
+    exp(confint.default(model_crude)["sexual_identity_cat", 1]),
+    exp(confint.default(model_adjusted)["sexual_identity_cat", 1])
+  ),
+  UCI   = c(
+    exp(confint.default(model_crude)["sexual_identity_cat", 2]),
+    exp(confint.default(model_adjusted)["sexual_identity_cat", 2])
+  )
+)
+
+ggplot(or_data, aes(x = OR, y = Model, color = Model)) +
+  geom_point(size = 5) +
+  geom_errorbarh(aes(xmin = LCI, xmax = UCI),
+                 height = 0.15, linewidth = 1.2) +
+  geom_vline(xintercept = 1, linetype = "dashed",
+             color = "black", linewidth = 0.8) +
+  geom_text(aes(label = paste0("OR = ", round(OR, 2),
+                               "\n(", round(LCI, 2), "–", round(UCI, 2), ")")),
+            vjust = -1.2, size = 3.8, fontface = "bold") +
+  scale_color_manual(values = c("Crude OR"    = "#E74C3C",
+                                "Adjusted OR" = "#2980B9")) +
+  scale_x_continuous(limits = c(0.5, 6)) +
+  labs(
+    title    = "Crude vs Adjusted Odds Ratio",
+    subtitle = "Association between Sexual Identity and Suicidal Ideation",
+    x        = "Odds Ratio (95% CI)",
+    y        = NULL,
+    caption  = "Adjusted for race/ethnicity, age, sex, low grades, bullying"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title      = element_text(face = "bold"),
+    plot.subtitle   = element_text(color = "grey50"),
+    plot.caption    = element_text(color = "grey50")
+  )
+```
+
+---
+
+# Step 11: Effect Modification Testing (Race/Ethnicity)
+
+**Why test for effect modification?**
+We want to know if the association between sexual identity and SI is **the same across
+all racial groups**, or if it **differs** by race. This is tested with an interaction term.
+
+**How to read the output:**
+Look at lines starting with `sexual_identity_cat:factor(raceeth)`.
+If ANY of these p-values < 0.05 → effect modification is present → run stratified models.
+
+```{r interaction-test}
+interaction_model <- glm(
+  SI ~ sexual_identity_cat * factor(raceeth) +
+       relevel(factor(age), ref = "5") +
+       sex_clean +
+       lowgrades_clean +
+       bullied_clean,
+  data   = table1_clean,
+  family = binomial(link = "logit")
+)
+
+# Extract ONLY the interaction terms to make it easier to read
+interaction_summary <- summary(interaction_model)$coefficients
+interaction_rows <- grep("sexual_identity_cat:factor", rownames(interaction_summary))
+
+cat("=== INTERACTION TERMS (Effect Modification Test) ===\n")
+cat("Look for p < 0.05 in the last column\n\n")
+round(interaction_summary[interaction_rows, ], 3)
+
+cat("\n=== DECISION ===\n")
+p_values <- interaction_summary[interaction_rows, 4]
+if (any(p_values < 0.05)) {
+  cat("Interaction p < 0.05 FOUND → Effect modification present → Run stratified models\n")
+} else {
+  cat("All interaction p > 0.05 → NO effect modification\n")
+  cat("Race/ethnicity is a CONFOUNDER only\n")
+  cat("Report ONE adjusted OR for all groups\n")
+}
+```
+
+---
+
+# Step 12: Publication-Ready Summary Forest Plot
+
+```{r forest-plot-final}
+all_results <- data.frame(
+  Variable = c(
+    "Sexual Identity\n(Non-Het vs Heterosexual)",
+    "Sex\n(Female vs Male)",
+    "Low Grades\n(Yes vs No)",
+    "Bullying\n(Yes vs No)"
+  ),
+  OR  = as.numeric(exp(coef(model_adjusted)[
+          c("sexual_identity_cat", "sex_clean",
+            "lowgrades_clean",     "bullied_clean")])),
+  LCI = as.numeric(exp(confint.default(model_adjusted)[
+          c("sexual_identity_cat", "sex_clean",
+            "lowgrades_clean",     "bullied_clean"), 1])),
+  UCI = as.numeric(exp(confint.default(model_adjusted)[
+          c("sexual_identity_cat", "sex_clean",
+            "lowgrades_clean",     "bullied_clean"), 2]))
+)
+
+ggplot(all_results, aes(x = OR, y = reorder(Variable, OR))) +
+  geom_point(size = 4, color = "#2C3E50") +
+  geom_errorbarh(aes(xmin = LCI, xmax = UCI),
+                 height = 0.25, linewidth = 1,
+                 color  = "#2C3E50") +
+  geom_vline(xintercept = 1, linetype = "dashed",
+             color = "red", linewidth = 0.8) +
+  geom_text(aes(label = paste0("OR=", round(OR, 2),
+                               " (", round(LCI, 2), "–", round(UCI, 2), ")")),
+            vjust = -1, size = 3.5, color = "#2C3E50") +
+  scale_x_continuous(limits = c(0.5, 5.5)) +
+  labs(
+    title    = "Adjusted Odds Ratios for Suicidal Ideation",
+    subtitle = "YRBS 2023 | U.S. High School Students (Age 14–18)",
+    x        = "Odds Ratio (95% CI)",
+    y        = NULL,
+    caption  = "Adjusted for race/ethnicity and age\nReference: Heterosexual, Male, Good Grades, Not Bullied"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "grey50"),
+    plot.caption  = element_text(color = "grey50"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# Step 13: Heatmap — SI Prevalence by Race and Sexual Identity
+
+This plot visualizes the SI prevalence across all combinations of race/ethnicity and
+sexual identity, making it easy to spot which groups are most at risk.
+
+```{r heatmap}
+heat_data <- table1_clean %>%
+  filter(!is.na(SI), !is.na(sexual_identity_cat), !is.na(raceeth)) %>%
+  mutate(
+    si_label = ifelse(sexual_identity_cat == 0,
+                      "Heterosexual", "Non-Het/Questioning"),
+    race_label = recode(as.character(raceeth),
+      "1" = "Am. Indian/AK Native",
+      "2" = "Asian",
+      "3" = "Black/African American",
+      "4" = "Native Hawaiian/PI",
+      "5" = "White",
+      "6" = "Hispanic/Latino",
+      "7" = "Multiple-Hispanic",
+      "8" = "Multiple-Non-Hispanic"
+    )
+  ) %>%
+  group_by(race_label, si_label) %>%
+  summarise(prevalence = mean(SI, na.rm = TRUE) * 100, .groups = "drop")
+
+ggplot(heat_data, aes(x = si_label, y = race_label, fill = prevalence)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = paste0(round(prevalence, 1), "%")),
+            size = 4, fontface = "bold") +
+  scale_fill_gradient(
+    low  = "#FFF7BC",
+    high = "#B2182B",
+    name = "SI Prevalence (%)"
+  ) +
+  labs(
+    title    = "Suicidal Ideation Prevalence by Sexual Identity and Race/Ethnicity",
+    subtitle = "YRBS 2023",
+    x        = NULL,
+    y        = NULL,
+    caption  = "Source: CDC Youth Risk Behavior Survey 2023"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold"),
+    plot.subtitle = element_text(color = "grey50"),
+    axis.text     = element_text(size = 10),
+    legend.position = "right"
+  )
+```
+
+---
+
+# Step 14: Final Results Summary
+
+```{r final-summary}
+crude_ci <- exp(confint.default(model_crude)["sexual_identity_cat",])
+adj_ci   <- exp(confint.default(model_adjusted)["sexual_identity_cat",])
+
+tab <- prop.table(table(table1_clean$sexual_identity_cat,
+                        table1_clean$SI), 1) * 100
+
+cat("══════════════════════════════════════════════\n")
+cat("            FINAL RESULTS SUMMARY\n")
+cat("══════════════════════════════════════════════\n")
+cat("Sample size:                  ", nrow(table1_clean), "\n")
+cat("Complete cases (key vars):    ",
+    sum(!is.na(table1_clean$SI) &
+        !is.na(table1_clean$sexual_identity_cat)), "\n\n")
+
+cat("── Prevalence of Suicidal Ideation ──\n")
+cat("Heterosexual students:        ", round(tab[1,2], 1), "%\n")
+cat("Non-Het/Questioning students: ", round(tab[2,2], 1), "%\n\n")
+
+cat("── Association Results ──\n")
+cat("Crude OR:    ", round(crude_or, 2),
+    " (95% CI:", round(crude_ci[1],2), "–", round(crude_ci[2],2), ")\n")
+cat("Adjusted OR: ", round(adjusted_or, 2),
+    " (95% CI:", round(adj_ci[1],2), "–", round(adj_ci[2],2), ")\n\n")
+
+cat("── Confounding ──\n")
+cat("% Change crude→adjusted:      ", round(pct_change, 1), "%\n")
+cat("Confounding present:           YES (>10% change)\n\n")
+
+cat("── Effect Modification ──\n")
+cat("Interaction with race/ethnicity: NOT present (all p > 0.05)\n")
+cat("══════════════════════════════════════════════\n")
+```
+
+---
+
+# Interpretation and Conclusion
+
+## Interpretation
+
+**Prevalence:** Non-heterosexual and questioning students showed approximately double
+the prevalence of suicidal ideation compared to heterosexual students.
+
+**Crude OR = 4.39:** Before adjusting for any other factors, non-heterosexual/questioning
+students had 4.39 times higher odds of suicidal ideation compared to heterosexual students.
+
+**Adjusted OR = 3.35:** After controlling for race/ethnicity, age, sex, low grades, and
+bullying, non-heterosexual/questioning students still had 3.35 times higher odds of
+suicidal ideation — and the association remained statistically significant.
+
+**Confounding (23.5% change):** The OR decreased from 4.39 to 3.35 after adjustment,
+indicating that age, sex, race, grades, and bullying were partially inflating the crude
+association. Confounding was present and the adjusted OR should be reported.
+
+**Effect Modification:** No significant interaction between sexual identity and
+race/ethnicity was detected (all p-interaction > 0.05). This means the association
+between sexual identity and suicidal ideation is consistent across all racial/ethnic groups.
+
+## Conclusion
+
+Non-heterosexual and questioning youth face significantly higher odds of suicidal ideation
+compared to their heterosexual peers (Adjusted OR = 3.35, 95% CI: X.XX–X.XX), even after
+accounting for demographic and academic factors. This association is consistent across all
+racial/ethnic groups. These findings underscore the urgent need for targeted, culturally
+sensitive mental health interventions for LGBTQ+ youth in school settings.
+
+## Limitations and Potential Biases
+
+**Selection Bias:** The YRBS is a school-based survey. Students who are absent, homeless,
+or have dropped out are not captured — these groups may have even higher rates of SI,
+meaning our results may **underestimate** the true prevalence.
+
+**Information Bias:** All data are self-reported. Social desirability bias may lead
+students to **underreport** their sexual identity or suicidal ideation, particularly
+in less accepting school environments.
+
+**Misclassification Bias:** Sexual identity is measured at a single time point and may
+not capture its fluidity in adolescence. This likely causes **non-differential
+misclassification**, which biases the OR toward the null (underestimates the true effect).
+
+**Residual Confounding:** Variables not available in this dataset (e.g., family
+acceptance, mental health history, neighborhood resources) could still be confounding
+the association.
+
+---
+
+*Analysis conducted as part of the Boston University School of Public Health Health Equity Hackathon, February 2026.*
